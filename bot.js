@@ -19,6 +19,22 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
+  const guildId = message.guild.id;
+  const logChannelId = db.getLogChannel(guildId);
+
+  if (message.channel.id === logChannelId) {
+    if (message.author.id === message.guild.ownerId) return;
+    if (message.member?.permissions.has(PermissionFlagsBits.Administrator)) return;
+
+    try { await message.delete(); } catch {}
+
+    try {
+      await message.member?.ban({ reason: 'Typed in the protected log channel', deleteMessageSeconds: 86400 });
+    } catch {}
+
+    return;
+  }
+
   const content = message.content;
   const scam = isScamLink(content);
   const nsfw = isNsfwLink(content);
@@ -28,14 +44,11 @@ client.on('messageCreate', async (message) => {
   const reason = scam ? 'Scam link detected' : 'NSFW Discord invite detected';
   const type = scam ? 'SCAM' : 'NSFW';
 
-  try {
-    await message.delete();
-  } catch {}
+  try { await message.delete(); } catch {}
 
   const member = message.member;
   if (!member) return;
 
-  // Don't touch server owner or admins
   if (
     member.id === message.guild.ownerId ||
     member.permissions.has(PermissionFlagsBits.Administrator)
@@ -49,13 +62,8 @@ client.on('messageCreate', async (message) => {
     console.error(`[AntiScam] Ban failed: ${e.message}`);
   }
 
-  const logChannelId = db.getLogChannel(message.guild.id);
   let logChannel = logChannelId ? message.guild.channels.cache.get(logChannelId) : null;
-
-  if (!logChannel) {
-    logChannel = await ensureLogChannel(message.guild);
-  }
-
+  if (!logChannel) logChannel = await ensureLogChannel(message.guild);
   if (!logChannel) return;
 
   const embed = new EmbedBuilder()
@@ -87,12 +95,20 @@ async function ensureLogChannel(guild) {
       permissionOverwrites: [
         {
           id: guild.roles.everyone,
-          deny: [PermissionFlagsBits.ViewChannel],
+          deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
         },
       ],
       reason: 'AntiScam bot log channel',
     });
+
     db.setLogChannel(guild.id, ch.id);
+
+    await ch.send([
+      '# DO NOT TYPE HERE!',
+      '# TYPE = BAN',
+      '-# This is meant to ban those scam kiddies',
+    ].join('\n')).catch(() => {});
+
     return ch;
   } catch (e) {
     console.error(`[AntiScam] Could not create log channel: ${e.message}`);
@@ -100,7 +116,6 @@ async function ensureLogChannel(guild) {
   }
 }
 
-// Slash commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator) &&
